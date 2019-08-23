@@ -1,0 +1,153 @@
+---
+title: "Automatic Gating To Singlets"
+author: "Hanne Grosemans"
+output:
+  html_document:
+    df_print: paged
+---
+
+# Load packages
+```{r}
+#source("http://www.bioconductor.org/biocLite.R")
+#biocLite("BiocUpgrade")
+library(tidyverse)
+library(openCyto)
+library(flowViz)
+library(flowUtils)
+library(flowDensity)
+library(ggplot2)
+library(dplyr)
+library(ggcyto)
+library(flowWorkspace)
+```
+
+#Load fcs file
+```{r}
+fcsFile <- list.files(path = "FCS/", pattern = ".fcs")
+fs <- read.flowSet(fcsFile, path = "FCS/")
+fcsFile <- read.FCS("FCS/WT.fcs")
+```
+#Explore data
+```{r}
+fcsFile
+exprs(fcsFile)[1:10,]
+summary(fcsFile)
+str(keyword(fcsFile))
+summary(fcsFile[,c(2, 8, 17, 23, 26)])
+```
+
+#Compensation
+Check $SPILLOVER for correct file by changing the x in spillover(fcsFile)[[x]] in the console (only #Single file)
+```{r}
+#Single file
+fcsFile_comp <- compensate(fcsFile, spillover(fcsFile)[[3]])
+fcsFile_comp
+#All files
+comp <- fsApply(fs, function(x)spillover(x)[[3]], simplify = FALSE)
+fs_comp <- compensate(fs, comp)
+```
+
+#Autoplot
+```{r}
+for(i in 1:length(fs)){
+  print(autoplot(fs[i], x = "FSC-A", y = "SSC-A", bins = 256))
+}
+```
+
+#Transform
+Check the correct columns (DO NOT select FSC or SSC)
+```{r}
+tf <- estimateLogicle(fs_comp[[1]], channels = colnames(fs_comp[, c(5:16, 20:22, 26:31)]))
+fs_trans <- transform(fs, tf)
+```
+
+##Automatic Gating till singlets
+#Gating nonDebris
+```{r}
+gs <- GatingSet(fs_trans)
+thisData <- getData(gs)
+nonDebrisGate <- fsApply(thisData, function(fr)openCyto:::.flowClust.2d(fr, channels = c("FSC-H", "SSC-H")))
+add(gs, nonDebrisGate, parent = "root", name = "nonDebris")
+recompute(gs)
+for(i in 1:length(gs)){
+  print(autoplot(gs[i], x = "FSC-H", y = "SSC-H", "nonDebris", bins = 256))
+}
+```
+
+#Gating singlets
+```{r}
+thisData <- getData(gs, "nonDebris")
+singletGate <- fsApply(thisData, function(fr)openCyto:::.singletGate(fr, channels = c("FSC-H", "FSC-W")))
+add(gs, singletGate, parent = "nonDebris", name = "singlets")
+recompute(gs)
+for(i in 1:length(gs)){
+  print(autoplot(gs[i], x = "FSC-H", y = "FSC-W", "singlets", bins = 256))
+}
+```
+
+#FITC
+```{r}
+thisData <- getData(gs, "singlets")
+LinGate <- fsApply(thisData, function(fr)openCyto:::.flowClust.2d(fr, channels = c("FSC-A","FITC-A"), target = c(1.5e05, 1.5) ))
+add(gs, LinGate, parent = "singlets", name = "Lin")
+recompute(gs)
+for(i in 1:length(gs)){
+  print(autoplot(gs[i], x = "FSC-A", y = "FITC-A", "Lin", bins = 256))
+}
+```
+
+#Gate SB436
+```{r}
+thisData <- getData(gs, "Lin")
+Sca1 <- fsApply(thisData, function(fr)openCyto:::.mindensity(fr, channels = "Violet_A-A", min = 2.5 ))
+add(gs, Sca1, parent = "Lin", name = "Sca1")
+getNodes(gs)
+recompute(gs)
+getStats(gs, "Sca1", "percent")
+for(i in 1:length(gs)){
+  print(autoplot(gs[i], x ="Violet_A-A" , "Sca1", bins = 256))
+}
+```
+
+#Gate PE
+```{r}
+thisData <- getData(gs, "Sca1")
+F3 <- fsApply(thisData, function(fr)openCyto:::.quantileGate(fr, channels = "PE-CF594 (YG)-A"))
+add(gs, F3, parent = "Sca1", name = "F3")
+getNodes(gs)
+recompute(gs)
+getStats(gs, "F3", "percent")
+for(i in 1:length(gs)){
+  print(autoplot(gs[i], y = "FSC-A", x ="PE-CF594 (YG)-A", "F3", bins = 256))
+}
+```
+
+#Get numbers
+```{r}
+getStats(gs)
+```
+
+
+##Manual gating for fluorescence
+#Gate FITC
+```{r}
+LinGate <- polygonGate("FSC-A" = c(40000, 40000, 100000, 200000, 200000), "FITC-A" = c(0, 1.4, 2.2, 2.2,0))
+add(gs, LinGate, parent = "singlets", name = "Lineage negative")
+getNodes(gs)
+recompute(gs)
+for(i in 1:length(gs)){
+  print(autoplot(gs[i], x = 'FSC-A', y = 'FITC-A', "Lineage negative", log = "FITC-A", bins = 256))
+}
+```
+
+#gate PE and SB436
+```{r}
+F3 <- quadGate("PE-CF594 (YG)-A" = 2.4, "Violet_A-A"  = 2.6)
+add(gs, F3, parent = "Lineage negative", name = c("Sca1+F3-", "Sca1+F3+", "Sca1- F3+", "Sca1-F3-"))
+getNodes(gs)
+recompute(gs)
+getStats(gs, c("Sca1+F3-", "Sca1+F3+", "Sca1- F3+", "Sca1-F3-"), "percent")
+for(i in 1:length(gs)){
+  print(autoplot(gs[i], x = "PE-CF594 (YG)-A", y = "Violet_A-A" , c("Sca1+F3-", "Sca1+F3+", "Sca1- F3+", "Sca1-F3-"), bins = 256))
+}
+```
