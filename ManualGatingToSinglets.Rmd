@@ -1,0 +1,123 @@
+---
+title: "Manual Gating"
+author: "Hanne Grosemans"
+output:
+  html_document:
+    df_print: paged
+---
+
+TO USE IF YOU DON'T WANT TO USE AUTOMATIC GATING FOR nonDEBRIS AND SINGLETS
+
+
+# Load packages
+```{r}
+#source("http://www.bioconductor.org/biocLite.R")
+#biocLite("BiocUpgrade")
+library(tidyverse)
+library(openCyto)
+library(flowViz)
+library(flowUtils)
+library(flowDensity)
+library(ggplot2)
+library(dplyr)
+library(ggcyto)
+library(flowWorkspace)
+```
+
+#Load fcs file
+```{r}
+fcsFile <- list.files(path = "FCS/", pattern = ".fcs")
+fs <- read.flowSet(fcsFile, path = "FCS/")
+fcsFile <- read.FCS("FCS/WT.fcs")
+```
+#Explore data
+```{r}
+fcsFile
+exprs(fcsFile)[1:10,]
+summary(fcsFile)
+str(keyword(fcsFile))
+summary(fcsFile[,c(2, 8, 17, 23, 26)])
+```
+
+#Compensation
+Check $SPILLOVER for correct file by changing the x in spillover(fcsFile)[[x]] in the console
+```{r}
+#Single file
+fcsFile_comp <- compensate(fcsFile, spillover(fcsFile)[[3]])
+fcsFile_comp
+#All files
+comp <- fsApply(fs, function(x)spillover(x)[[3]], simplify = FALSE)
+fs_comp <- compensate(fs, comp)
+```
+
+#Autoplot
+```{r}
+for (i in 1:length(fs_comp)){
+  print(autoplot(fs_comp[i], x = "FSC-A", y = "SSC-A", bins = 256))
+}
+```
+
+#Transform
+```{r}
+tf <- estimateLogicle(fs_comp[[1]], channels = colnames(fs_comp[,c(5:16, 20:22, 26:31)]))
+fs_trans <- transform(fs, tf)
+```
+
+
+##Manual gating
+#Gating nonDebris
+```{r}
+gs <- GatingSet(fs_trans)
+rg1 <- rectangleGate("FSC-H" = c(25000, Inf), filterId = "nonDebris")
+add(gs, rg1, parent = "root")
+getNodes(gs)
+recompute(gs)
+for(i in 1:length(gs)){
+ print(autoplot(gs[i], x = "FSC-H", y = "SSC-H", "nonDebris", bins = 256))
+}
+```
+
+
+#Gate the singlets
+```{r}
+rg2 <- rectangleGate("FSC-H" = c(25000, 115000), "FSC-W" = c(40000, 100000))
+add(gs, rg2, parent = "nonDebris", name = "singlets")
+getNodes(gs)
+recompute(gs)
+for(i in 1:length(gs)){
+  print(autoplot(gs[i], x = "FSC-H", y = "FSC-W", "singlets", bins = 256))
+}
+```
+
+#Check gating percentages
+```{r}
+plot(gs)
+getStats(gs)
+getStats(gs, "singlets", "percent")
+fs_singlets <- getData(gs, "/nonDebris/singlets")
+fsApply(fs_singlets, each_col, median)
+```
+
+#Gate FITC
+```{r}
+LinGate <- polygonGate("FSC-A" = c(40000, 40000, 100000, 200000, 200000), "FITC-A" = c(0, 1.5, 2.2, 2.2,0))
+add(gs, LinGate, parent = "singlets", name = "Lineage negative")
+getNodes(gs)
+recompute(gs)
+for(i in 1:length(gs)){
+  print(autoplot(gs[i], x = 'FSC-A', y = 'FITC-A', "Lineage negative", log = "FITC-A", bins = 256))
+}
+```
+
+#gate PE and SB436
+```{r}
+F3 <- quadGate("PE-CF594 (YG)-A" = 2.4, "Violet_A-A"  = 2.6)
+add(gs, F3, parent = "Lineage negative", name = c("Sca1+F3-", "Sca1+F3+", "Sca1- F3+", "Sca1-F3-"))
+getNodes(gs)
+recompute(gs)
+getStats(gs, c("Sca1+F3-", "Sca1+F3+", "Sca1- F3+", "Sca1-F3-"), "percent")
+for(i in 1:length(gs)){
+  print(autoplot(gs[i], x = "PE-CF594 (YG)-A", y = "Violet_A-A" , c("Sca1+F3-", "Sca1+F3+", "Sca1- F3+", "Sca1-F3-"), bins = 256))
+}
+```
+
