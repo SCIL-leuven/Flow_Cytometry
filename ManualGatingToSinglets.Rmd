@@ -1,9 +1,7 @@
 ---
 title: "Manual Gating"
 author: "Hanne Grosemans"
-output:
-  html_document:
-    df_print: paged
+output: github_document
 ---
 
 TO USE IF YOU DON'T WANT TO USE AUTOMATIC GATING FOR nonDEBRIS AND SINGLETS
